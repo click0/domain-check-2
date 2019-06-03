@@ -15,6 +15,7 @@
 #   Fixed displaying of some long registrars -- https://github.com/hawkeye116477
 #   Fixed support for .jp domain -- https://github.com/hawkeye116477
 #   Fixed SUBTLDTYPE variable -- https://github.com/hawkeye116477
+#   Added 'suspended' status -- https://github.com/hawkeye116477
 #
 #  Version 2.37
 #   Added support for .live domain -- https://github.com/hawkeye116477
@@ -800,6 +801,9 @@ check_domain_status()
     DOMAINJULIAN=$(date2julian ${MONTH} ${1#0} ${3})
     DOMAINDIFF=$(date_diff ${NOWJULIAN} ${DOMAINJULIAN})
 
+    # Domain which is suspended by registrar (most often due to the lack of a fee extending the right to use it or legal issues)
+    suspended=`${GREP} "is undergoing proceeding" ${WHOIS_TMP}`
+
     if [ ${DOMAINDIFF} -lt 0 ] && [ ${DOMAINJULIAN} -gt 0 ]
     then
           if [ "${ALARM}" == "TRUE" ]
@@ -817,6 +821,9 @@ check_domain_status()
                     | ${MAIL} -s "Domain ${DOMAIN} will expire in ${WARNDAYS}-days or less" ${ADMIN}
            fi
            prints "${DOMAIN}" "Expiring" "${DOMAINDATE}" "${DOMAINDIFF}" "${REGISTRAR}"
+    elif [ ! -z "$suspended" ]
+    then
+        prints "${DOMAIN}" "Suspended" "${DOMAINDATE}"  "${DOMAINDIFF}" "${REGISTRAR}"
     elif [ ${DOMAINJULIAN} -eq 0 ]
     then
         prints "${DOMAIN}" "Unknown" "Unknown" "Unknown" "${REGISTRAR}"
