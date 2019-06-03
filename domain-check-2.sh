@@ -15,7 +15,7 @@
 #   Fixed displaying of some long registrars -- https://github.com/hawkeye116477
 #   Fixed support for .jp domain -- https://github.com/hawkeye116477
 #   Fixed SUBTLDTYPE variable -- https://github.com/hawkeye116477
-#   Added 'suspended' status -- https://github.com/hawkeye116477
+#   Added 'suspended' and 'book_blocked' status -- https://github.com/hawkeye116477
 #
 #  Version 2.37
 #   Added support for .live domain -- https://github.com/hawkeye116477
@@ -543,10 +543,17 @@ check_domain_status()
        REGISTRAR=$(${AWK} '/Registrar:/ && $0 != "" {print $2; exit}' ${WHOIS_TMP})
     fi
 
-    # If the Registrar is NULL, then we didn't get any data
-    if [ "${REGISTRAR}" = "" ]
+    # Domain in queue, registration temporarily blocked
+    book_blocked=`${GREP} "after release from the queue, available for registration" ${WHOIS_TMP}`
+
+    # If the Registrar is NULL, then we usually didn't get any data
+    if [ "${REGISTRAR}" = "" ] && [ -z "$book_blocked" ];
     then
         prints "$DOMAIN" "Unknown" "Unknown" "Unknown" "Unknown"
+        return
+    elif [ "${REGISTRAR}" = "" ] && [ ! -z "$book_blocked" ]
+    then
+        prints "$DOMAIN" "Book_blocked" "Unknown" "Unknown" "Unknown"
         return
     fi
 
