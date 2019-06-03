@@ -14,6 +14,7 @@
 #   Added support for .sk domain -- https://github.com/hawkeye116477
 #   Fixed displaying of some long registrars -- https://github.com/hawkeye116477
 #   Fixed support for .jp domain -- https://github.com/hawkeye116477
+#   Fixed SUBTLDTYPE variable -- https://github.com/hawkeye116477
 #
 #  Version 2.37
 #   Added support for .live domain -- https://github.com/hawkeye116477
@@ -402,7 +403,7 @@ check_domain_status()
     fi
     if [ "${TLDTYPE}"  == "ua" -o "${TLDTYPE}"  == "pl" ];
     then
-        SUBTLDTYPE=$(echo ${DOMAIN} | ${AWK} -F. '{print tolower($(NF-1)"."$(NF));}')
+        SUBTLDTYPE=$(echo ${DOMAIN} | ${AWK} -F. '{print tolower($(NF-1)"."$(NF));}') | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r"
     fi
 
     # Invoke whois to find the domain registrar and expiration date
