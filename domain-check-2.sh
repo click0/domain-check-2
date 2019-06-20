@@ -565,6 +565,15 @@ check_domain_status()
         tday=`echo ${tdomdate} | ${CUT} -d'-' -f3 | ${CUT} -d'T' -f1`
         DOMAINDATE=`echo $tday-$tmonth-$tyear`
 
+    elif [ "${TLDTYPE}" == "xxx" ]; # for .xxx domain @tozapid 2019/06/21
+    then
+        tdomdate=`${AWK} '/Expiration date:/ { print $3 }' ${WHOIS_TMP}`
+        tyear=`echo ${tdomdate} | ${CUT} -d'-' -f1`
+        tmon=`echo ${tdomdate} | ${CUT} -d'-' -f2`
+        tmonth=$(getmonth_number ${tmon})
+        tday=`echo ${tdomdate} | ${CUT} -d'-' -f3`
+        DOMAINDATE=`echo $tday-$tmonth-$tyear`
+
     elif [ "${TLDTYPE}" == "md" ]; # for .md domain
     then
         tdomdate=`${AWK} '/Expiration date:/ { print $3 }' ${WHOIS_TMP}`
