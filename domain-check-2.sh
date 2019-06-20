@@ -497,6 +497,9 @@ check_domain_status()
     elif [ "${TLDTYPE}" == "укр" ]; # added by @click0 20190515
     then
         REGISTRAR=`${AWK} -F: '/Registrar:/ && $2 != "" { REGISTRAR=substr($2,2,65) } END { print REGISTRAR }' ${WHOIS_TMP}`
+    elif [ "${TLDTYPE}" == "рф" ]; # added by @Tozapid 20190621
+    then
+        REGISTRAR=`${AWK} -F: '/registrar:/ && $2 != "" { REGISTRAR=substr($2,2,65) } END { print REGISTRAR }' ${WHOIS_TMP}`
     elif [ "${TLDTYPE}" == "kz" ]; # added by @click0 20190223
     then
         REGISTRAR=`${AWK} -F": " '/Current Registar:/ && $0 != "" {print $2;}' ${WHOIS_TMP} | ${TR} -d " \r"`
@@ -567,11 +570,11 @@ check_domain_status()
 
     elif [ "${TLDTYPE}" == "xxx" ]; # for .xxx domain @tozapid 2019/06/21
     then
-        tdomdate=`${AWK} '/Expiration date:/ { print $3 }' ${WHOIS_TMP}`
+        tdomdate=`${AWK} '/Expiry Date:/ { print $4 }' ${WHOIS_TMP}`
         tyear=`echo ${tdomdate} | ${CUT} -d'-' -f1`
         tmon=`echo ${tdomdate} | ${CUT} -d'-' -f2`
         tmonth=$(getmonth_number ${tmon})
-        tday=`echo ${tdomdate} | ${CUT} -d'-' -f3`
+        tday=`echo ${tdomdate} | ${CUT} -d'-' -f3 | ${CUT} -d'T' -f1`
         DOMAINDATE=`echo $tday-$tmonth-$tyear`
 
     elif [ "${TLDTYPE}" == "md" ]; # for .md domain
@@ -589,7 +592,7 @@ check_domain_status()
 
     elif [ "${TLDTYPE}" == "jp" ]; # for .jp fixed @hawkeye116477 2019/06/03
     then
-        tdomdate=`${AWK} '/\[有効期限\]|\[Expires on\]/ {print $2}' ${WHOIS_TMP} | ${TR} -d " \r"`
+        tdomdate=`${AWK} '/\[有効期限\]|\[Expires on\]/ {print $3}' ${WHOIS_TMP} | ${TR} -d " \r"`
         tyear=`echo ${tdomdate} | ${CUT} -d'/' -f1`
         tmon=`echo ${tdomdate} | ${CUT} -d'/' -f2`
         tmonth=$(getmonth_number ${tmon})
@@ -622,6 +625,15 @@ check_domain_status()
         tmonth=$(getmonth ${tmon})
         tmonth=$(getmonth_number ${tmonth})
         tday=`echo ${tdomdate} | ${CUT} -d'-' -f1`
+        DOMAINDATE=`echo "${tday}-${tmonth}-${tyear}"`
+
+    elif [ "${TLDTYPE}" == "рф" ]; # for .рф @Tozapid 2019/06/21
+    then
+        tdomdate=`${AWK} '/paid-till:/ { print $2 }' ${WHOIS_TMP}`
+        tyear=`echo ${tdomdate} | ${CUT} -d'-' -f1`
+        tmon=`echo ${tdomdate} |${CUT} -d'-' -f2`
+        tmonth=$(getmonth_number ${tmon})
+        tday=`echo ${tdomdate} | ${CUT} -d "-" -f 3 | ${CUT} -d "T" -f 1`
         DOMAINDATE=`echo "${tday}-${tmonth}-${tyear}"`
 
     elif [ "${TLDTYPE}" == "is" ]; # for .is @hawkeye116477 2019/04/08
