@@ -443,6 +443,9 @@ check_domain_status()
     elif [ "${TLDTYPE}" == "stream" ]; # added by @hawkeye116477 20190616
     then
         ${WHOIS} -h whois.nic.stream "${1}" | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" > ${WHOIS_TMP}
+    elif [ "${TLDTYPE}" == "id" ];
+    then
+       ${WHOIS} -h whois.id "${1}" | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" > ${WHOIS_TMP}
     else
         ${WHOIS} -h ${WHS} "${1}" | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" > ${WHOIS_TMP}
     fi
@@ -549,7 +552,11 @@ check_domain_status()
     elif [ "${TLDTYPE}" == "sk" ]; # added by @hawkeye116477 20190603
     then
         REGISTRAR=$(${AWK} '/Registrar:/ && $0 != "" {print $2; exit}' ${WHOIS_TMP})
+    elif [ "${TLDTYPE}" == "id" ];
+    then
+    	REGISTRAR=`cat ${WHOIS_TMP} | ${AWK} -F: '/Registrar Organization:/ && $2 != ""  { REGISTRAR=substr($2,1,17) } END { print REGISTRAR }'`
     fi
+
 
     # If the Registrar is NULL, then we didn't get any data
     if [ "${REGISTRAR}" = "" ]
@@ -802,6 +809,28 @@ check_domain_status()
         tmon=`echo ${tdomdate} | ${CUT} -d "-" -f 2`
         tmonth=$(getmonth_number ${tmon})
         tday=`echo ${tdomdate} | ${CUT} -d "-" -f 3`
+        DOMAINDATE=`echo "${tday}-${tmonth}-${tyear}"`
+    elif [ "${TLDTYPE}" == "id" ]; 
+    then
+        tdomdate=`cat ${WHOIS_TMP} | ${AWK} '/Expiration Date:/ { print $2 }' | sed -e 's/Date\:\(.*\)/\1/'`
+        tyear=`echo ${tdomdate} | ${CUT} -d "-" -f 3`
+        tmon=`echo ${tdomdate} | ${CUT} -d "-" -f 2`
+               case ${tmon} in
+                     Jan) tmonth=jan ;;
+                     Feb) tmonth=feb ;;
+                     Mar) tmonth=mar ;;
+                     Apr) tmonth=apr ;;
+                     Mei) tmonth=may ;;
+                     Jun) tmonth=jun ;;
+                     Jul) tmonth=jul ;;
+                     Aug) tmonth=aug ;;
+                     Sep) tmonth=sep ;;
+                     Oct) tmonth=oct ;;
+                     Nov) tmonth=nov ;;
+                     Dec) tmonth=dec ;;
+                     *) tmonth=0 ;;
+               esac
+        tday=`echo ${tdomdate} | ${CUT} -d "-" -f 1`
         DOMAINDATE=`echo "${tday}-${tmonth}-${tyear}"`
 
     # may work with others	 ??? ;)
