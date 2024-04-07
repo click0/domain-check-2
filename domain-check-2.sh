@@ -6,10 +6,13 @@
 # Author: Matty < matty91 at gmail dot com >
 # Co-author: Vladislav V. Prodan <github.com/click0>
 #
-# Current Version: 2.69
-# Last Updated: 19-Mar-2024
+# Current Version: 2.70
+# Last Updated: 07-Apr-2024
 #
 # Revision History:
+#
+#  Version 2.70
+#   Fixed support for .sg domain -- Vladyslav V. Prodan <github.com/click0>
 #
 #  Version 2.69
 #   Fixed support for .sk/.bm TLDs. -- Vladyslav V. Prodan <github.com/click0>
@@ -772,7 +775,7 @@ check_domain_status()
         "${TLDTYPE}" == "team" -o "${TLDTYPE}" == "info" -o "${TLDTYPE}" == "xxx" -o "${TLDTYPE}" == "md" -o \
         "${TLDTYPE}" == "se" -o "${TLDTYPE}" == "nu" -o "${TLDTYPE}" == "dk" -o "${TLDTYPE}" == "it" -o \
         "${TLDTYPE}" == "do" -o "${TLDTYPE}" == "ro" -o "${TLDTYPE}" == "game" -o "${TLDTYPE}" == "pk" -o \
-        "${TLDTYPE}" == "ee" -o "${TLDTYPE}" == "st" ];
+        "${TLDTYPE}" == "ee" -o "${TLDTYPE}" == "st" -o "${TLDTYPE}" == "sg" ];
     then
         # From date format 2023-12-11 convert to ${tday}-${tmonth}-${tyear} (11-dec-2023)
         tdomdate=`${AWK} '/Registrar Registration Expiration [Dd]ate:|Registry Expiry Date:|Expiration [Dd]ate:|\
@@ -1055,14 +1058,6 @@ check_domain_status()
        tday=$(echo $tdomdate| ${CUT} -c-2)
        DOMAINDATE=`echo $tday-$tmonth-$tyear`
 
-    elif [ "${TLDTYPE}" == "sg" ]; # for .sg added @copenhaus 2021/03/02
-    then
-       tdomdate=`${AWK} '/Expiration Date:/ { print $3 }' ${WHOIS_TMP} | ${TR} -d " \r"`
-       tyear=$(echo $tdomdate| ${CUT} -c8-11)
-       tmonth=$(echo $tdomdate| ${CUT} -c4-6)
-       tday=$(echo $tdomdate| ${CUT} -c-2)
-       DOMAINDATE=`echo $tday-$tmonth-$tyear`
-
     elif [ "${TLDTYPE}" == "ar" ] && [ "${SUBTLDTYPE}" != "com.ar" ] # for .ar added @axelvf 2022/07/21
     then
         tdomdate=`${AWK} '/expire:/ { print $2 }' ${WHOIS_TMP} | ${TR} -d " \r"`
@@ -1072,7 +1067,7 @@ check_domain_status()
         tday=`echo ${tdomdate} | ${CUT} -d'.' -f3`
         DOMAINDATE=`echo "${tday}-${tmonth}-${tyear}"`
 
-    elif [ "${TLDTYPE}" == "cf" ]; # for .sg added @click0 2021/07/24
+    elif [ "${TLDTYPE}" == "cf" ]; # for .cf added @click0 2021/07/24
     then
        tdomdate=`${AWK} -F: '/Record will expire on:/ { print $2 }' ${WHOIS_TMP} | ${TR} -d " \r"`
        tyear=$(echo ${tdomdate} | ${CUT} -d'/' -f3)
