@@ -6,10 +6,13 @@
 # Author: Matty < matty91 at gmail dot com >
 # Co-author: Vladislav V. Prodan <github.com/click0>
 #
-# Current Version: 2.70
-# Last Updated: 07-Apr-2024
+# Current Version: 2.71
+# Last Updated: 13-Jun-2024
 #
 # Revision History:
+#
+#  Version 2.71
+#   Fixed support for .kr TLD. -- Vladyslav V. Prodan <github.com/click0>
 #
 #  Version 2.70
 #   Fixed support for .sg domain -- Vladyslav V. Prodan <github.com/click0>
@@ -723,7 +726,7 @@ check_domain_status()
         REGISTRAR=`${AWK} -F'(' '/Registrar:/ && $0 != "" { getline; sub(/^[ \t]+/,"",$0); print $1 }' ${WHOIS_TMP}`
     elif [ "${TLDTYPE}" == "kr" ];
     then
-        REGISTRAR=`${AWK} -F: '/Registrant / && $2 != "" { REGISTRAR=substr($2,2,30) } END { print REGISTRAR }' ${WHOIS_TMP}`
+        REGISTRAR=$(${AWK} -F: '/Registrant  / && $2 != "" { sub(/^[ \t]+/,"",$2); print $2 }' ${WHOIS_TMP})
 
     elif [ "${TLDTYPE}" == "hk" ];
     then
