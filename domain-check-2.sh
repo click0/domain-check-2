@@ -4,12 +4,15 @@
 # Program: Domain Expiration Check <domain-check>
 #
 # Author: Matty < matty91 at gmail dot com >
-# Co-author: Vladislav V. Prodan <github.com/click0>
+# Co-author: Vladyslav V. Prodan <github.com/click0>
 #
-# Current Version: 2.71
-# Last Updated: 13-Jun-2024
+# Current Version: 2.72
+# Last Updated: 20-Oct-2024
 #
 # Revision History:
+#
+#  Version 2.72
+#   Fixed support for .md/.ps TLDs. -- Vladyslav V. Prodan <github.com/click0>
 #
 #  Version 2.71
 #   Fixed support for .kr TLD. -- Vladyslav V. Prodan <github.com/click0>
@@ -564,7 +567,7 @@ check_domain_status()
     then
         # section for TLDTYPE
         [ "${TLDTYPE}" == "bm" ] && WHS="whois.nic.bm";
-        [ "${TLDTYPE}" == "ps" ] && WHS="whois.pnina.ps";
+        [ "${TLDTYPE}" == "ps" ] && WHS="95.217.44.246"; # Look output server here # https://www.pnina.ps/whois/
 
         # section for SUBTLDTYPE
         [ "${SUBTLDTYPE}" == "co.pl" ] && WHS="whois.co.pl"; 	# added by @hawkeye116477 20190514
@@ -775,7 +778,7 @@ check_domain_status()
         "${TLDTYPE}" == "expert" -o "${TLDTYPE}" == "express" -o "${TLDTYPE}" == "ca" -o "${TLDTYPE}" == "space" -o \
         "${TLDTYPE}" == "fun" -o "${TLDTYPE}" == "museum" -o "${TLDTYPE}" == "live" -o "${TLDTYPE}" == "club" -o \
         "${TLDTYPE}" == "stream" -o "${TLDTYPE}" == "today" -o "${TLDTYPE}" == "website" -o "${TLDTYPE}" == "host" -o \
-        "${TLDTYPE}" == "team" -o "${TLDTYPE}" == "info" -o "${TLDTYPE}" == "xxx" -o "${TLDTYPE}" == "md" -o \
+        "${TLDTYPE}" == "team" -o "${TLDTYPE}" == "info" -o "${TLDTYPE}" == "xxx" -o \
         "${TLDTYPE}" == "se" -o "${TLDTYPE}" == "nu" -o "${TLDTYPE}" == "dk" -o "${TLDTYPE}" == "it" -o \
         "${TLDTYPE}" == "do" -o "${TLDTYPE}" == "ro" -o "${TLDTYPE}" == "game" -o "${TLDTYPE}" == "pk" -o \
         "${TLDTYPE}" == "ee" -o "${TLDTYPE}" == "st" -o "${TLDTYPE}" == "sg" ];
@@ -1106,6 +1109,15 @@ check_domain_status()
         tyear=$(echo ${tdomdate} | ${CUT} -d' ' -f6)
         tmonth=$(echo ${tdomdate} | ${CUT} -d' ' -f2)
         tday=$(echo ${tdomdate} | ${CUT} -d' ' -f3)
+        DOMAINDATE=$(echo ${tday}-${tmonth}-${tyear})
+
+    elif [ "${TLDTYPE}" == "md" ];
+    then
+        tdomdate=$(${AWK} '/Expires    on/ { print $3 }' ${WHOIS_TMP})
+        tyear=$(echo ${tdomdate} | ${CUT} -d- -f1)
+        tmonth=$(echo ${tdomdate} | ${CUT} -d- -f2)
+        tmonth=$(getmonth_number ${tmonth})
+        tday=$(echo ${tdomdate} | ${CUT} -d- -f3)
         DOMAINDATE=$(echo ${tday}-${tmonth}-${tyear})
 
     # may work with others	 ??? ;)
