@@ -6,10 +6,12 @@
 # Author: Matty < matty91 at gmail dot com >
 # Co-author: Vladyslav V. Prodan <github.com/click0>
 #
-# Current Version: 2.72
-# Last Updated: 20-Oct-2024
+# Current Version: 2.73
+# Last Updated: 11-Feb-2025
 #
 # Revision History:
+#  Version 2.73
+#   Fixed support for .dk TLD without registrar info -- Lasse Glerup <github.com/lglerup>
 #
 #  Version 2.72
 #   Fixed support for .md/.ps TLDs. -- Vladyslav V. Prodan <github.com/click0>
@@ -687,7 +689,7 @@ check_domain_status()
         REGISTRAR=`${AWK} -F: '/registrar:/ && $2 != "" { REGISTRAR=substr($2,22,40) } END { print REGISTRAR }' ${WHOIS_TMP}`
     elif [ "${TLDTYPE}" == "dk" ];
     then
-        REGISTRAR=`${AWK} -F: '/Registrar:/ && $2 != "" { REGISTRAR=substr($2,13,40) } END { print REGISTRAR }' ${WHOIS_TMP}`
+        REGISTRAR=`${AWK} -F: '/Registrar:/ && $2 != "" { REGISTRAR=substr($2,13,40) } END { print REGISTRAR ? REGISTRAR : "N/A" }' ${WHOIS_TMP}`
     elif [ "${TLDTYPE}" == "tr" ];
     then
         REGISTRAR=`${AWK} -F': ' '/Organization Name/ { REGISTRAR=substr($2,0,47);print REGISTRAR }' ${WHOIS_TMP}`
