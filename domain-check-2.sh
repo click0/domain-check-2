@@ -6,10 +6,13 @@
 # Author: Matty < matty91 at gmail dot com >
 # Co-author: Vladyslav V. Prodan <github.com/click0>
 #
-# Current Version: 2.73
-# Last Updated: 11-Feb-2025
+# Current Version: 2.74
+# Last Updated: 02-Jun-2025
 #
 # Revision History:
+#  Version 2.74
+#   Fixed support for .id TLDs. -- Vladyslav V. Prodan <github.com/click0>
+#
 #  Version 2.73
 #   Fixed support for .dk TLD without registrar info -- Lasse Glerup <github.com/lglerup>
 #
@@ -717,9 +720,6 @@ check_domain_status()
     elif [ "${TLDTYPE}" == "il" ];
     then
         REGISTRAR=$(${AWK} -F': ' '/registrar name:/ && $0 != "" { print $2 }' ${WHOIS_TMP})
-    elif [ "${TLDTYPE}" == "id" ];
-    then
-        REGISTRAR=$(${AWK} -F: '/Registrar Organization:/ && $2 != "" { sub(/^[ \t]+/,"",$2); print $2 }' ${WHOIS_TMP})
     elif [ "${TLDTYPE}" == "tg" ];
     then
         REGISTRAR=`${ECHO} ${REGISTRAR} | ${TR} -d "."`
@@ -971,13 +971,13 @@ check_domain_status()
         tday=`echo ${tdomdate} | ${CUT} -d'-' -f3`
         DOMAINDATE=`echo "${tday}-${tmonth}-${tyear}"`
 
-    elif [ "${TLDTYPE}" == "id" ]; # for .id @Minitram 2019/07/01
+    elif [ "${TLDTYPE}" == "id" ];
     then
-        tdomdate=`${AWK} '/Expiration Date:/ { print $3 }' ${WHOIS_TMP}`
-        tyear=`echo ${tdomdate} | ${CUT} -d'-' -f3`
+        tdomdate=`${AWK} -F':' '/Registry Expiry Date:/ { print $2 }' ${WHOIS_TMP} | ${AWK} -F'T' '{ print $1; }' | ${TR} -d " "`
+        tyear=`echo ${tdomdate} | ${CUT} -d'-' -f1`
         tmon=`echo ${tdomdate} | ${CUT} -d'-' -f2`
-        tmonth=$(tolower ${tmon})
-        tday=`echo ${tdomdate} | ${CUT} -d'-' -f1`
+        tmonth=$(getmonth_number ${tmon})
+        tday=`echo ${tdomdate} | ${CUT} -d'-' -f3`
         DOMAINDATE=`echo "${tday}-${tmonth}-${tyear}"`
 
     elif [ "${SUBTLDTYPE}" == "com.br" ];
