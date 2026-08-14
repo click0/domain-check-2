@@ -18,6 +18,8 @@ Requirements:
 -
 Requires `whois`, `curl`, `mail` (mailutils).
 
+Tested on FreeBSD (`/bin/sh`, BSD userland) and Linux (`bash`, GNU userland).
+
 `curl` is used for the RDAP fallback (many registries dropped port-43 WHOIS
 after the ICANN sunset - e.g. `.app`, `.info`, `.mobi`, `.pro` and all
 Identity Digital TLDs) and for domains in the `.kz` zone
@@ -44,9 +46,18 @@ How it works:
    remove the file to force a refresh).
 2. If whois returns nothing or hides the dates, the script falls back to
    RDAP via the [rdap.org](https://rdap.org) bootstrap redirector.
-3. Zones without whois and RDAP data are handled individually
-   (`.kz` via the whois page of hoster.kz) or honestly reported
-   as `Unknown` (`.ro`).
+3. ccTLD registries that run RDAP but are missing from the IANA
+   bootstrap are queried directly (`.kz` via rdap.nic.kz).
+4. Registries that publish the registrar but never the expiration date
+   (`.at`, `.ae`, `.be`, `.nz`, `.ro`, `.nl`, `.no`, `.lu`, `.com.pe`)
+   are reported with the status `Hidden`.
+5. registro.br (.br / .com.br) aggressively rate limits by IP - both its
+   whois and RDAP go quiet for a day or longer after a burst of queries;
+   such domains may occasionally show `Unknown` on large runs.
+6. Zones with no public whois or RDAP data at all are honestly reported
+   as `Unknown`: `.al`, `.az`, `.ba`, `.bg`, `.bs`, `.bt`, `.cd`, `.cf`,
+   `.cg`, `.ch`, `.li`, `.de`, `.es`, `.gr`, `.hu`, `.tk`, `.ga`,
+   `.com.sa` and a few other small registries.
 
 Sample outputs:
 ```

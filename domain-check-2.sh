@@ -6,10 +6,33 @@
 # Author: Matty < matty91 at gmail dot com >
 # Co-author: Vladyslav V. Prodan <github.com/click0>
 #
-# Current Version: 3.0
+# Current Version: 3.1
 # Last Updated: 14-Aug-2026
 #
 # Revision History:
+#  Version 3.1
+#   Added a table of direct RDAP servers for ccTLDs missing from the IANA
+#   bootstrap registry that rdap.org relies on or whose queries should
+#   not depend on the redirector: .kz (rdap.nic.kz), .nl (rdap.sidn.nl),
+#   .no (rdap.norid.no). The hoster.kz workaround is gone - both the expiration
+#   date and the registrar of .kz domains now come from the registry RDAP
+#   (the registrar is read from the eventActor of the expiration event).
+#   Added .tm (owner organisation and expiration date).
+#   Added .lu and .com.pe registrar parsers.
+#   Extended the "Hidden" status to .nz, .ro, .nl, .no, .lu, .com.pe and
+#   .com.au - their registries publish the registrar (via whois or RDAP)
+#   but never the expiration date. For .nl and .no the registrar is taken
+#   from RDAP (rdap.sidn.nl / rdap.norid.no directly).
+#   Fixed SUBTLDTYPE being computed only for a handful of zones - stale
+#   values silently disabled every other second-level check.
+#   Fixed rdap_registrar on BSD awk - a multi-character RS is silently
+#   truncated to its first character there; entity splitting now uses
+#   gsub, which behaves identically everywhere.
+#   The expiration event of RDAP replies is now matched under its
+#   different registry spellings ("expiration", "Record expires",
+#   "registrar expiration") and field orders.
+#   -- Vladyslav V. Prodan <github.com/click0>
+#
 #  Version 3.0
 #   Added RDAP fallback (via rdap.org bootstrap) when whois hides or omits
 #   registrar/expiration data (ICANN port-43 WHOIS sunset).
@@ -28,6 +51,9 @@
 #   hoster.kz for both the date and the registrar.
 #   Added a direct whois.nic.uk override - IANA lists no whois server
 #   for .uk. Removed the dead whois.gov.uk override.
+#   Added .cl (registrar and expiration date) and .at/.ae/.be - their
+#   registries publish the registrar but never the expiration date, such
+#   domains are reported with the status "Hidden".
 #   Silenced whois stderr, empty replies now fall through to RDAP.
 #   -- Vladyslav V. Prodan <github.com/click0>
 #
@@ -565,11 +591,22 @@ tolower()
 ##################################################################
 rdap_query()
 {
+    local RDAP_BASE
+    # Some ccTLD registries run RDAP but are missing from the IANA bootstrap
+    # registry that rdap.org relies on - query their servers directly.
+    # Direct registry servers also relieve the rdap.org redirector, which
+    # occasionally goes quiet under long runs.
+    case "${TLDTYPE}" in
+        kz) RDAP_BASE="https://rdap.nic.kz" ;;
+        nl) RDAP_BASE="https://rdap.sidn.nl" ;;
+        no) RDAP_BASE="https://rdap.norid.no" ;;
+        *)  RDAP_BASE="https://rdap.org" ;;
+    esac
     # Avoid RDAP rate limits (rdap.org) - slowdown our rdap client by adding 1 sec
     sleep 1
     ${CURL} -sL --max-time 15 -A "$VARUSERAGENT" \
         -H "Accept: application/rdap+json" \
-        "https://rdap.org/domain/${1}" 2>/dev/null | \
+        "${RDAP_BASE}/domain/${1}" 2>/dev/null | \
         env LC_CTYPE=C LC_ALL=C ${TR} -d "\n\r" > ${RDAP_TMP}
 }
 
@@ -582,11 +619,18 @@ rdap_expiry_date()
 {
     local tdomdate tyear tmon tmonth tday
     # events may come in any order inside the JSON, so try both layouts
+    # registries name the event differently: "expiration" (standard),
+    # "Record expires" (KazNIC/CCTLD.KG), "registrar expiration" (.ng), and
+    # the eventDate may come before or after the eventAction
     tdomdate=$(${SED} -n \
-        's/.*"eventAction"[[:space:]]*:[[:space:]]*"expiration"[[:space:]]*,[[:space:]]*"eventDate"[[:space:]]*:[[:space:]]*"\([0-9-]*\)T.*/\1/p' \
+        's/.*"eventAction"[[:space:]]*:[[:space:]]*"\([Rr]ecord \)\{0,1\}[Ee]xpir[a-z]*"[[:space:]]*,[[:space:]]*"eventDate"[[:space:]]*:[[:space:]]*"\([0-9-]*\)T.*/\2/p' \
         ${RDAP_TMP} | ${HEAD} -1)
     [ "x${tdomdate}" = "x" ] && tdomdate=$(${SED} -n \
-        's/.*"eventDate"[[:space:]]*:[[:space:]]*"\([0-9-]*\)T[^"]*"[[:space:]]*,[[:space:]]*"eventAction"[[:space:]]*:[[:space:]]*"expiration".*/\1/p' \
+        's/.*"eventDate"[[:space:]]*:[[:space:]]*"\([0-9-]*\)T[^"]*"[[:space:]]*,[[:space:]]*"eventAction"[[:space:]]*:[[:space:]]*"\([Rr]ecord \)\{0,1\}[Ee]xpir[a-z]*".*/\1/p' \
+        ${RDAP_TMP} | ${HEAD} -1)
+    # last resort: any other field (e.g. eventActor) between the action and the date
+    [ "x${tdomdate}" = "x" ] && tdomdate=$(${SED} -n \
+        's/.*"eventAction"[[:space:]]*:[[:space:]]*"\([Rr]ecord \)\{0,1\}[Ee]xpir[a-z]*"[^}]*"eventDate"[[:space:]]*:[[:space:]]*"\([0-9-]*\)T.*/\2/p' \
         ${RDAP_TMP} | ${HEAD} -1)
     [ "x${tdomdate}" = "x" ] && return
     tyear=$(echo ${tdomdate} | ${CUT} -d'-' -f1)
@@ -603,9 +647,18 @@ rdap_expiry_date()
 ##################################################################
 rdap_registrar()
 {
-    ${SED} -e 's/\\"/ /g' ${RDAP_TMP} | \
-        ${AWK} -v RS='"objectClassName"' '/"registrar"/ { print; exit }' | \
-        ${SED} -n 's/.*"fn",[[:space:]]*[^,]*,[[:space:]]*"text",[[:space:]]*"\([^"]*\)".*/\1/p' | ${HEAD} -1
+    local TREG
+    # split the JSON into one entity per line; do NOT use a multi-char RS -
+    # BSD awk silently takes only its first character
+    TREG=$(${SED} -e 's/\\"/ /g' ${RDAP_TMP} | \
+        ${AWK} '{ gsub(/"objectClassName"/, "\n"); print }' | \
+        ${GREP} '"registrar"' | ${HEAD} -1 | \
+        ${SED} -n 's/.*"fn",[[:space:]]*[^,]*,[[:space:]]*"text",[[:space:]]*"\([^"]*\)".*/\1/p')
+    # some registries (e.g. KazNIC) have no registrar entity but name the
+    # registrar as the eventActor of the expiration event
+    [ "x${TREG}" = "x" ] && \
+        TREG=$(${SED} -n 's/.*"eventAction"[[:space:]]*:[[:space:]]*"expiration"[^}]*"eventActor"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' ${RDAP_TMP} | ${HEAD} -1)
+    echo "${TREG}"
 }
 
 ##################################################################
@@ -628,13 +681,11 @@ check_domain_status()
     then
         TLDTYPE=$(echo "${DOMAIN}" | ${AWK} -F. '{print tolower($(NF-1));}')
     fi
-    if [ "${TLDTYPE}" == "ua" ] || [ "${TLDTYPE}" == "pl" ] || [ "${TLDTYPE}" == "br" ] || [ "${TLDTYPE}" == "jp" ] || \
-        [ "${TLDTYPE}" == "za" ] || \
-        [ "${TLDTYPE}" == "uk" ];
-    then
-        local SUBTLDTYPE
-        SUBTLDTYPE=$(echo "${DOMAIN}" | ${AWK} -F. '{print tolower($(NF-1)"."$(NF));}')
-    fi
+    # always compute the second level (e.g. "com.pe" for google.com.pe) -
+    # it used to be set only for a handful of zones, which left the variable
+    # empty (or stale) for every other subdomain check
+    local SUBTLDTYPE
+    SUBTLDTYPE=$(echo "${DOMAIN}" | ${AWK} -F. '{print tolower($(NF-1)"."$(NF));}')
 
     # Invoke whois to find the domain registrar and expiration date
     # ${WHOIS} -h ${WHOIS_SERVER} "=${1}" > ${WHOIS_TMP}
@@ -688,13 +739,6 @@ check_domain_status()
         ${WHOIS} "${1}" 2>/dev/null | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" > ${WHOIS_TMP}
     fi
 
-    if [ "${TLDTYPE}" == "kz" ];
-    then
-        # ps.kz turned into a JS-only SPA in 2026; hoster.kz still renders whois server-side
-        ${CURL} -sL -A "$VARUSERAGENT" "https://hoster.kz/whois/?domain=${1}" \
-            | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" >${WHOIS_2_TMP}
-    fi
-
     # Parse out the expiration date and registrar -- uses the last registrar it finds
     REGISTRAR=`${AWK} -F: '/Registrar:/ && $2 != "" { REGISTRAR=substr($2,2,40) } END { print REGISTRAR }' ${WHOIS_TMP}\
         | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" | ${SED} -e 's/[[:space:]\t]*// ;'`
@@ -719,6 +763,29 @@ check_domain_status()
         REGISTRAR=`${AWK} -F']' '/\[Organization\]/ && $2 != "" { sub(/^[ \t]+/,"",$2); print $2 }' ${WHOIS_TMP} |
             ${TR} -d "\r"`
     # no longer shows Registrar name, so will use Status #
+    elif [ "${TLDTYPE}" == "at" ];
+    then
+        REGISTRAR=`${AWK} -F: '/^registrar:/ && $2 != "" { sub(/^[ \t]+/,"",$2); sub(/ \(.*/,"",$2); print substr($2,1,46) }' ${WHOIS_TMP} | ${HEAD} -1`
+    elif [ "${TLDTYPE}" == "ae" ];
+    then
+        REGISTRAR=`${AWK} -F: '/^Registrar Name:/ && $2 != "" { sub(/^[ \t]+/,"",$2); print substr($2,1,46) }' ${WHOIS_TMP} | ${HEAD} -1`
+    elif [ "${TLDTYPE}" == "be" ];
+    then
+        # the .be whois prints the name on the line after the "Registrar:" header
+        REGISTRAR=`${AWK} -F: '/^Registrar:/ { f=1; next } f && /Name:/ { sub(/^[ \t]+/,"",$2); print substr($2,1,46); exit }' ${WHOIS_TMP}`
+    elif [ "${TLDTYPE}" == "cl" ];
+    then
+        REGISTRAR=`${AWK} -F: '/^Registrar name:/ && $2 != "" { sub(/^[ \t]+/,"",$2); print substr($2,1,46) }' ${WHOIS_TMP} | ${HEAD} -1`
+    elif [ "${TLDTYPE}" == "lu" ];
+    then
+        REGISTRAR=`${AWK} -F: '/^registrar-name:/ && $2 != "" { sub(/^[ \t]+/,"",$2); print substr($2,1,46) }' ${WHOIS_TMP} | ${HEAD} -1`
+    elif [ "${SUBTLDTYPE}" == "com.pe" ];
+    then
+        REGISTRAR=`${AWK} -F: '/^Sponsoring Registrar:/ && $2 != "" { sub(/^[ \t]+/,"",$2); print substr($2,1,46) }' ${WHOIS_TMP} | ${HEAD} -1`
+    elif [ "${TLDTYPE}" == "tm" ];
+    then
+        # whois.nic.tm shows no registrar - use the owner organisation
+        REGISTRAR=`${AWK} -F: '/^Owner OrgName/ && $2 != "" { sub(/^[ \t]+/,"",$2); print substr($2,1,46) }' ${WHOIS_TMP} | ${HEAD} -1`
     elif [ "${TLDTYPE}" == "md" ];
     then
         REGISTRAR=$(${AWK} -F: '/Registrar:/ && $2 != "" { REGISTRAR=substr($2,7,46) } END { print REGISTRAR }' ${WHOIS_TMP})
@@ -772,10 +839,8 @@ check_domain_status()
     elif [ "${TLDTYPE}" == "kz" ]; # added by @click0 20190223
     then
         REGISTRAR=`${AWK} -F": " '/Current Registar:/ && $0 != "" { print $2 }' ${WHOIS_TMP} | ${TR} -d " \r"`
-        # whois.nic.kz no longer shows the registrar - take it from the hoster.kz whois page
-        [ "x${REGISTRAR}" = "x" ] && \
-            REGISTRAR="$(${GREP} -E -o 'Регистратор [A-Za-z0-9. -]+' ${WHOIS_2_TMP} | ${HEAD} -1 | ${SED} -e 's/Регистратор //' -e 's/, трансфер.*//' -e 's/[[:space:]]*$//')"
-        [ "x${REGISTRAR}" = "x" ] && REGISTRAR="Unknown (hoster.kz)"
+        # whois.nic.kz omits the registrar for some domains and never shows the
+        # expiration date - both are then taken from RDAP (rdap.nic.kz)
     elif [ "${TLDTYPE}" == "cz" ]; # added by Minitram 20170830
     then
         REGISTRAR=`${AWK} -F: '/registrar:/ && $2 != "" { REGISTRAR=substr($2,5,17) } END { print REGISTRAR }' ${WHOIS_TMP}`
@@ -873,14 +938,33 @@ check_domain_status()
     fi
     # If the Registrar is NULL, then we didn't get any data from whois.
     # Many registries dropped port-43 WHOIS (ICANN sunset), so try RDAP.
-    local RDAPDATE
+    local RDAPDATE NOEXPIRY
     RDAPDATE=""
+    # registries of these zones do not publish the expiration date at all
+    NOEXPIRY=""
+    case "${TLDTYPE}" in
+        at|ae|be|nz|ro|nl|no|lu) NOEXPIRY="TRUE" ;;
+    esac
+    case "${SUBTLDTYPE}" in
+        com.pe|com.au) NOEXPIRY="TRUE" ;;
+    esac
     if [ "x${REGISTRAR}" = "x" ]
     then
         rdap_query "${DOMAIN}"
         RDAPDATE=$(rdap_expiry_date)
         if [ "x${RDAPDATE}" = "x" ]
         then
+            # no expiration in RDAP; for NOEXPIRY zones that is normal -
+            # show the registrar from RDAP with the status "Hidden"
+            if [ "x${NOEXPIRY}" = "xTRUE" ]
+            then
+                REGISTRAR=$(rdap_registrar | ${CUT} -c1-46)
+                if [ "x${REGISTRAR}" != "x" ]
+                then
+                    prints "${DOMAIN}" "Hidden" "Hidden" "Unknown" "${REGISTRAR}"
+                    return
+                fi
+            fi
             prints "${DOMAIN}" "Unknown" "Unknown" "Unknown" "Unknown"
             return
         fi
@@ -1009,17 +1093,6 @@ check_domain_status()
              *) tmonth=0 ;;
         esac
         tday=`echo ${tdomdate} | ${CUT} -d' ' -f2`
-        DOMAINDATE=`echo "${tday}-${tmonth}-${tyear}"`
-
-    elif [ "${TLDTYPE}" == "kz" ]; # for .kz @click0 2019/02/23
-    then
-        # hoster.kz: the date follows the "Домен оплачен до" label on the next line
-        tdomdate=$(${GREP} -A 1 'оплачен до' ${WHOIS_2_TMP} | \
-            ${GREP} -E -o '[0-9]{4}-[0-9]{2}-[0-9]{2}' | ${HEAD} -1)
-        tyear=`echo ${tdomdate} | ${CUT} -d'-' -f1`
-        tmon=`echo ${tdomdate} | ${CUT} -d'-' -f2`
-        tmonth=$(getmonth_number ${tmon})
-        tday=$(echo ${tdomdate} | ${CUT} -d'-' -f3)
         DOMAINDATE=`echo "${tday}-${tmonth}-${tyear}"`
 
     elif [ "${TLDTYPE}" == "edu" ] # added on 26-aug-2017 by nixCraft
@@ -1236,6 +1309,26 @@ check_domain_status()
         tday=$(echo ${tdomdate} | ${CUT} -d' ' -f3)
         DOMAINDATE=$(echo ${tday}-${tmonth}-${tyear})
 
+    elif [ "${TLDTYPE}" == "tm" ];
+    then
+        # "Expiry : 2027-01-30"
+        tdomdate=$(${AWK} -F: '/^Expiry[ \t]*:/ { gsub(/[ \t]/,"",$2); print $2 }' ${WHOIS_TMP} | ${HEAD} -1)
+        tyear=$(echo ${tdomdate} | ${CUT} -d'-' -f1)
+        tmon=$(echo ${tdomdate} | ${CUT} -d'-' -f2)
+        tmonth=$(getmonth_number ${tmon})
+        tday=$(echo ${tdomdate} | ${CUT} -d'-' -f3)
+        DOMAINDATE=`echo ${tday}-${tmonth}-${tyear}`
+
+    elif [ "${TLDTYPE}" == "cl" ];
+    then
+        # "Expiration date: 2026-11-20 14:48:02 CLST" - take the date part only
+        tdomdate=$(${AWK} -F': ' '/^Expiration date:/ { print $2 }' ${WHOIS_TMP} | ${AWK} '{ print $1 }' | ${HEAD} -1)
+        tyear=$(echo ${tdomdate} | ${CUT} -d'-' -f1)
+        tmon=$(echo ${tdomdate} | ${CUT} -d'-' -f2)
+        tmonth=$(getmonth_number ${tmon})
+        tday=$(echo ${tdomdate} | ${CUT} -d'-' -f3)
+        DOMAINDATE=`echo ${tday}-${tmonth}-${tyear}`
+
     elif [ "${TLDTYPE}" == "md" ];
     then
         # NIC.MD v2.8.1 (2026) prints "Expires on:", older format was "Expires    on"
@@ -1250,6 +1343,23 @@ check_domain_status()
     else
         DOMAINDATE=`${AWK} '/Expiration:|[Ee]xpires:|Registry Expiry Date:|Registrar Registration Expiration Date:/ \
         { print $NF }' ${WHOIS_TMP} | ${AWK} -FT '{ print $1 }' | ${HEAD} -1`
+    fi
+
+    # The registry never publishes the expiration date - report the
+    # registrar (from whois, or from RDAP for .nl/.no) with the status
+    # "Hidden" instead of "Unknown".
+    if [ "x${NOEXPIRY}" = "xTRUE" ]
+    then
+        if [ "x${REGISTRAR}" = "x" ]
+        then
+            [ -s "${RDAP_TMP}" ] || rdap_query "${DOMAIN}"
+            REGISTRAR=$(rdap_registrar | ${CUT} -c1-46)
+        fi
+        if [ "x${REGISTRAR}" != "x" ]
+        then
+            prints "${DOMAIN}" "Hidden" "Hidden" "Unknown" "${REGISTRAR}"
+            return
+        fi
     fi
 
     # RDAP fallback if whois did not reveal the expiration date.
