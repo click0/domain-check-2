@@ -16,7 +16,16 @@ $ sudo chmod +x /usr/local/bin/domain-check-2
 ```
 Requirements:
 -
-Requires `whois`, `curl` (for domains in the .kz zone), `mail` (mailutils).
+Requires `whois`, `curl`, `mail` (mailutils).
+
+`curl` is used for the RDAP fallback (many registries dropped port-43 WHOIS
+after the ICANN sunset - e.g. `.app`, `.info`, `.mobi`, `.pro` and all
+Identity Digital TLDs) and for domains in the `.kz` zone
+(the registry does not publish expiration dates via whois, so the script
+queries the whois page of hoster.kz).
+
+Optional: `timeout` (coreutils / FreeBSD base) - if present, whois queries
+are limited to 15 seconds instead of hanging on dead servers.
 
 Usage:
 ------
@@ -26,6 +35,19 @@ $ domain-check-2 -d google.com
 $ domain-check-2 -f domain-list.txt
 $ domain-check-2 -f domain-list.txt -a -e admin@my-cool-domain.com
 ```
+How it works:
+-------------
+1. The registrar and expiration date are taken from whois (port 43).
+   The whois server of each TLD is discovered via whois.iana.org and
+   cached between runs in `/var/tmp/domain-check-2.servers`
+   (override the path via the `IANA_CACHE` environment variable,
+   remove the file to force a refresh).
+2. If whois returns nothing or hides the dates, the script falls back to
+   RDAP via the [rdap.org](https://rdap.org) bootstrap redirector.
+3. Zones without whois and RDAP data are handled individually
+   (`.kz` via the whois page of hoster.kz) or honestly reported
+   as `Unknown` (`.ro`).
+
 Sample outputs:
 ```
 Domain                              Registrar                                      Status   Expires     Days Left

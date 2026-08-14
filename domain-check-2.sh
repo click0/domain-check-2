@@ -6,10 +6,31 @@
 # Author: Matty < matty91 at gmail dot com >
 # Co-author: Vladyslav V. Prodan <github.com/click0>
 #
-# Current Version: 2.74
-# Last Updated: 02-Jun-2025
+# Current Version: 3.0
+# Last Updated: 14-Aug-2026
 #
 # Revision History:
+#  Version 3.0
+#   Added RDAP fallback (via rdap.org bootstrap) when whois hides or omits
+#   registrar/expiration data (ICANN port-43 WHOIS sunset).
+#   Fixed IFS not being restored after date parsing - it disabled word
+#   splitting for the rest of the run and broke multi-word $WHOIS commands.
+#   Fixed WHOIS_TMP not being truncated between domains - a failed lookup
+#   used to inherit the data of the previous domain.
+#   Wrapped whois queries in timeout(1) (15s, when available) - dead
+#   whois servers no longer hang the run for minutes.
+#   Cached whois.iana.org answers per TLD in /var/tmp/domain-check-2.servers
+#   between runs (override the path via IANA_CACHE).
+#   Fixed .md - NIC.MD whois v2.8.1 renamed the date field to "Expires on:".
+#   Fixed .kg - whois.kg leaves the Name field empty now, the registrar is
+#   taken from the Billing Contact email instead.
+#   Fixed .kz - ps.kz became a JS-only SPA, switched to the whois page of
+#   hoster.kz for both the date and the registrar.
+#   Added a direct whois.nic.uk override - IANA lists no whois server
+#   for .uk. Removed the dead whois.gov.uk override.
+#   Silenced whois stderr, empty replies now fall through to RDAP.
+#   -- Vladyslav V. Prodan <github.com/click0>
+#
 #  Version 2.74
 #   Fixed support for .id TLDs. -- Vladyslav V. Prodan <github.com/click0>
 #
@@ -402,6 +423,10 @@ done
 
 AWK=$(command -v awk)
 WHOIS=$(command -v whois)
+TIMEOUT=$(command -v timeout)
+# whois(1) has no connect timeout of its own; dead servers hang for minutes
+WHOIS_TIMEOUT=15
+[ "x${TIMEOUT}" != "x" ] && WHOIS="${TIMEOUT} ${WHOIS_TIMEOUT} ${WHOIS}"
 DATE=$(command -v date)
 CUT=$(command -v cut)
 GREP=$(command -v grep)
@@ -421,6 +446,10 @@ VARUSERAGENT="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 # Place to stash temporary files
 WHOIS_TMP="/var/tmp/whois.$$"
 WHOIS_2_TMP="/var/tmp/whois_2.$$"
+RDAP_TMP="/var/tmp/rdap.$$"
+# whois.iana.org rate limits us after a handful of queries, so the TLD -> server
+# map is cached between runs. Remove the file to force a refresh.
+IANA_CACHE="${IANA_CACHE:-/var/tmp/domain-check-2.servers}"
 
 #############################################################################
 # Purpose: Convert a date from MONTH-DAY-YEAR to Julian format
@@ -530,6 +559,56 @@ tolower()
 }
 
 ##################################################################
+# Purpose: Query RDAP (via rdap.org bootstrap) as a fallback source
+# Arguments:
+#   $1 -> Domain to check
+##################################################################
+rdap_query()
+{
+    # Avoid RDAP rate limits (rdap.org) - slowdown our rdap client by adding 1 sec
+    sleep 1
+    ${CURL} -sL --max-time 15 -A "$VARUSERAGENT" \
+        -H "Accept: application/rdap+json" \
+        "https://rdap.org/domain/${1}" 2>/dev/null | \
+        env LC_CTYPE=C LC_ALL=C ${TR} -d "\n\r" > ${RDAP_TMP}
+}
+
+##################################################################
+# Purpose: Extract the expiration date (dd-mon-yyyy) from RDAP data
+# Arguments:
+#   None (reads ${RDAP_TMP})
+##################################################################
+rdap_expiry_date()
+{
+    local tdomdate tyear tmon tmonth tday
+    # events may come in any order inside the JSON, so try both layouts
+    tdomdate=$(${SED} -n \
+        's/.*"eventAction"[[:space:]]*:[[:space:]]*"expiration"[[:space:]]*,[[:space:]]*"eventDate"[[:space:]]*:[[:space:]]*"\([0-9-]*\)T.*/\1/p' \
+        ${RDAP_TMP} | ${HEAD} -1)
+    [ "x${tdomdate}" = "x" ] && tdomdate=$(${SED} -n \
+        's/.*"eventDate"[[:space:]]*:[[:space:]]*"\([0-9-]*\)T[^"]*"[[:space:]]*,[[:space:]]*"eventAction"[[:space:]]*:[[:space:]]*"expiration".*/\1/p' \
+        ${RDAP_TMP} | ${HEAD} -1)
+    [ "x${tdomdate}" = "x" ] && return
+    tyear=$(echo ${tdomdate} | ${CUT} -d'-' -f1)
+    tmon=$(echo ${tdomdate} | ${CUT} -d'-' -f2)
+    tmonth=$(getmonth_number ${tmon})
+    tday=$(echo ${tdomdate} | ${CUT} -d'-' -f3)
+    echo "${tday}-${tmonth}-${tyear}"
+}
+
+##################################################################
+# Purpose: Extract the registrar name from RDAP data
+# Arguments:
+#   None (reads ${RDAP_TMP})
+##################################################################
+rdap_registrar()
+{
+    ${SED} -e 's/\\"/ /g' ${RDAP_TMP} | \
+        ${AWK} -v RS='"objectClassName"' '/"registrar"/ { print; exit }' | \
+        ${SED} -n 's/.*"fn",[[:space:]]*[^,]*,[[:space:]]*"text",[[:space:]]*"\([^"]*\)".*/\1/p' | ${HEAD} -1
+}
+
+##################################################################
 # Purpose: Access whois data to grab the registrar and expiration date
 # Arguments:
 #   $1 -> Domain to check
@@ -563,7 +642,13 @@ check_domain_status()
 
     local WHS
     if [ -n "${WHOIS_SERVER}" ] && [ "${WHOIS_SERVER}" == "whois.iana.org" ]; then
-        WHS="$(${WHOIS} -h "${WHOIS_SERVER}" "${TLDTYPE}" | ${AWK} '/whois:/ {print $2}')"
+        # look up the server of this TLD in the cache first
+        WHS="$(${AWK} -v t="${TLDTYPE}" '$1 == t { print $2 }' ${IANA_CACHE} 2>/dev/null | ${HEAD} -1)"
+        if [ "x${WHS}" = "x" ]
+        then
+            WHS="$(${WHOIS} -h "${WHOIS_SERVER}" "${TLDTYPE}" 2>/dev/null | ${AWK} '/whois:/ {print $2}' | ${HEAD} -1)"
+            [ "x${WHS}" != "x" ] && echo "${TLDTYPE} ${WHS}" >> ${IANA_CACHE} 2>/dev/null
+        fi
     else
         WHS="${WHOIS_SERVER}"
     fi
@@ -580,17 +665,33 @@ check_domain_status()
             [ "${SUBTLDTYPE}" == "org.za" ] || [ "${SUBTLDTYPE}" == "web.za" ] && \
             WHS="whois.registry.net.za";
         [ "${SUBTLDTYPE}" == "gov.za" ] && WHS="whois.gov.za";
-        [ "${SUBTLDTYPE}" == "gov.uk" ] && WHS="whois.gov.uk";
+        # whois.gov.uk is gone (host no longer resolves) - removed in 2.75
+        # IANA lists no whois: line for .uk, so point at Nominet directly
+        [ "${TLDTYPE}" == "uk" ] && WHS="whois.nic.uk";
         [ "${SUBTLDTYPE}" == "biz.ua" ] && WHS="whois.biz.ua";
         [ "${SUBTLDTYPE}" == "co.ua" ] && WHS="whois.co.ua";
         [ "${SUBTLDTYPE}" == "pp.ua" ] && WHS="whois.pp.ua";
     fi
 
-    ${WHOIS} -h ${WHS} "${1}" | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" > ${WHOIS_TMP}
+    # always start with an empty file, otherwise a failed lookup would leave
+    # the data of the previous domain in place
+    : > ${WHOIS_TMP}
+
+    if [ "x${WHS}" != "x" ]
+    then
+        ${WHOIS} -h "${WHS}" "${1}" 2>/dev/null | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" > ${WHOIS_TMP}
+    fi
+
+    # No server known, or it gave us nothing - let the whois client pick one
+    if [ ! -s "${WHOIS_TMP}" ]
+    then
+        ${WHOIS} "${1}" 2>/dev/null | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" > ${WHOIS_TMP}
+    fi
 
     if [ "${TLDTYPE}" == "kz" ];
     then
-        ${CURL} -s -A "$VARUSERAGENT" "https://www.ps.kz/domains/whois/result?q=${1}" \
+        # ps.kz turned into a JS-only SPA in 2026; hoster.kz still renders whois server-side
+        ${CURL} -sL -A "$VARUSERAGENT" "https://hoster.kz/whois/?domain=${1}" \
             | env LC_CTYPE=C LC_ALL=C ${TR} -d "\r" >${WHOIS_2_TMP}
     fi
 
@@ -621,6 +722,9 @@ check_domain_status()
     elif [ "${TLDTYPE}" == "md" ];
     then
         REGISTRAR=$(${AWK} -F: '/Registrar:/ && $2 != "" { REGISTRAR=substr($2,7,46) } END { print REGISTRAR }' ${WHOIS_TMP})
+        # NIC.MD v2.8.1 dropped the Registrar field, but some domains show a Registrant
+        [ "x${REGISTRAR}" = "x" ] && \
+            REGISTRAR=$(${AWK} -F: '/^Registrant:/ && $2 != "" { sub(/^[ \t]+/,"",$2); print substr($2,1,46) }' ${WHOIS_TMP} | ${HEAD} -1)
         [ "x${REGISTRAR}" = "x" ] && REGISTRAR="Hidden"
     elif [ "${TLDTYPE}" == "info" ];
     then
@@ -668,6 +772,10 @@ check_domain_status()
     elif [ "${TLDTYPE}" == "kz" ]; # added by @click0 20190223
     then
         REGISTRAR=`${AWK} -F": " '/Current Registar:/ && $0 != "" { print $2 }' ${WHOIS_TMP} | ${TR} -d " \r"`
+        # whois.nic.kz no longer shows the registrar - take it from the hoster.kz whois page
+        [ "x${REGISTRAR}" = "x" ] && \
+            REGISTRAR="$(${GREP} -E -o 'Регистратор [A-Za-z0-9. -]+' ${WHOIS_2_TMP} | ${HEAD} -1 | ${SED} -e 's/Регистратор //' -e 's/, трансфер.*//' -e 's/[[:space:]]*$//')"
+        [ "x${REGISTRAR}" = "x" ] && REGISTRAR="Unknown (hoster.kz)"
     elif [ "${TLDTYPE}" == "cz" ]; # added by Minitram 20170830
     then
         REGISTRAR=`${AWK} -F: '/registrar:/ && $2 != "" { REGISTRAR=substr($2,5,17) } END { print REGISTRAR }' ${WHOIS_TMP}`
@@ -759,12 +867,25 @@ check_domain_status()
     elif [ "${TLDTYPE}" == "kg" ];
     then
         REGISTRAR="$(${AWK} -F: '/Billing Contact:/ { getline; getline; sub(/^[ \t]+/,"",$2); print $2 }' ${WHOIS_TMP})"
+        # since 2026 whois.kg leaves the Name field empty - fall back to the billing email
+        [ "x${REGISTRAR}" = "x" ] && \
+            REGISTRAR="$(${AWK} '/Billing Contact:/ { f=1 } f && /Email:/ { print $2; exit }' ${WHOIS_TMP})"
     fi
-    # If the Registrar is NULL, then we didn't get any data
+    # If the Registrar is NULL, then we didn't get any data from whois.
+    # Many registries dropped port-43 WHOIS (ICANN sunset), so try RDAP.
+    local RDAPDATE
+    RDAPDATE=""
     if [ "x${REGISTRAR}" = "x" ]
     then
-        prints "${DOMAIN}" "Unknown" "Unknown" "Unknown" "Unknown"
-        return
+        rdap_query "${DOMAIN}"
+        RDAPDATE=$(rdap_expiry_date)
+        if [ "x${RDAPDATE}" = "x" ]
+        then
+            prints "${DOMAIN}" "Unknown" "Unknown" "Unknown" "Unknown"
+            return
+        fi
+        REGISTRAR=$(rdap_registrar | ${CUT} -c1-46)
+        [ "x${REGISTRAR}" = "x" ] && REGISTRAR="Unknown (RDAP)"
     fi
 
     # The whois Expiration data should resemble the following: "Expiration Date: 09-may-2008"
@@ -892,7 +1013,9 @@ check_domain_status()
 
     elif [ "${TLDTYPE}" == "kz" ]; # for .kz @click0 2019/02/23
     then
-        tdomdate=$(${GREP} -A 2 'Дата окончания:' ${WHOIS_2_TMP} | ${TAIL} -n 1 | ${AWK} '{print $1;}' | ${AWK} -FT '{print $1}')
+        # hoster.kz: the date follows the "Домен оплачен до" label on the next line
+        tdomdate=$(${GREP} -A 1 'оплачен до' ${WHOIS_2_TMP} | \
+            ${GREP} -E -o '[0-9]{4}-[0-9]{2}-[0-9]{2}' | ${HEAD} -1)
         tyear=`echo ${tdomdate} | ${CUT} -d'-' -f1`
         tmon=`echo ${tdomdate} | ${CUT} -d'-' -f2`
         tmonth=$(getmonth_number ${tmon})
@@ -1115,7 +1238,8 @@ check_domain_status()
 
     elif [ "${TLDTYPE}" == "md" ];
     then
-        tdomdate=$(${AWK} '/Expires    on/ { print $3 }' ${WHOIS_TMP})
+        # NIC.MD v2.8.1 (2026) prints "Expires on:", older format was "Expires    on"
+        tdomdate=$(${AWK} '/Expires[ \t]+on:?/ { print $NF }' ${WHOIS_TMP})
         tyear=$(echo ${tdomdate} | ${CUT} -d- -f1)
         tmonth=$(echo ${tdomdate} | ${CUT} -d- -f2)
         tmonth=$(getmonth_number ${tmonth})
@@ -1128,8 +1252,25 @@ check_domain_status()
         { print $NF }' ${WHOIS_TMP} | ${AWK} -FT '{ print $1 }' | ${HEAD} -1`
     fi
 
+    # RDAP fallback if whois did not reveal the expiration date.
+    # A parsed date is considered valid only if it contains a 4-digit year.
+    if [ "x${RDAPDATE}" != "x" ]
+    then
+        DOMAINDATE="${RDAPDATE}"
+    else
+        case "${DOMAINDATE}" in
+            *[0-9][0-9][0-9][0-9]*) : ;; # looks like a real date, keep it
+            *)
+                rdap_query "${DOMAIN}"
+                RDAPDATE=$(rdap_expiry_date)
+                [ "x${RDAPDATE}" != "x" ] && DOMAINDATE="${RDAPDATE}"
+                ;;
+        esac
+    fi
+
     #echo $DOMAINDATE # debug
     # Whois data should be in the following format: "13-feb-2006"
+    OLDIFS="${IFS}"
     IFS="-"
     set -- ${DOMAINDATE}
     MONTH=$(getmonth ${2})
@@ -1140,7 +1281,9 @@ check_domain_status()
         DOMAINDATE=${3}-${MONTH_IN_WORDS}-${1}
         set -- ${DOMAINDATE}
     fi
-    IFS=""
+    # restore the field separator; IFS="" here used to disable word splitting
+    # for the rest of the run and broke multi-word commands like "timeout 15 whois"
+    IFS="${OLDIFS}"
 
     # Convert the date to seconds, and get the diff between NOW and the expiration date
     DOMAINJULIAN=$(date2julian ${MONTH} ${1#0} ${3#0})
@@ -1328,6 +1471,7 @@ echo
 ### Remove the temporary files
 [ -f "${WHOIS_TMP}" ] && rm -f ${WHOIS_TMP};
 [ -f "${WHOIS_2_TMP}" ] && rm -f ${WHOIS_2_TMP};
+[ -f "${RDAP_TMP}" ] && rm -f ${RDAP_TMP};
 
 ### Exit with a success indicator
 exit 0

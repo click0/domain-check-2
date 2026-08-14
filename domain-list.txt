@@ -55,7 +55,7 @@ google.express
 google.space
 google.ca
 google.co.pl
-zaproszenia.co.pl
+#zaproszenia.co.pl
 гугл.укр
 google.fun
 about.museum
